@@ -90,6 +90,11 @@ PdoTranslateBusAddress(
     OUT     PPHYSICAL_ADDRESS   TranslatedAddress
     );
 
+extern USHORT
+PdoGetInstanceId(
+    IN PXENBUS_PDO Pdo
+    );
+
 extern ULONG
 PdoSetBusData(
     IN  PXENBUS_PDO     Pdo,
@@ -111,7 +116,10 @@ PdoGetBusData(
 extern NTSTATUS
 PdoCreate(
     IN  PXENBUS_FDO     Fdo,
-    IN  PANSI_STRING    Name
+    IN  PANSI_STRING    Name,
+    IN  USHORT          DeviceId,
+    IN  BOOLEAN         IsVusbDevice,
+    OUT PXENBUS_PDO     *NewPdo
     );
 
 extern VOID

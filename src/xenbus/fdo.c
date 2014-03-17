@@ -62,6 +62,16 @@
 
 #define MAXNAMELEN  128
 
+static FORCEINLINE PANSI_STRING
+__FdoMultiSzToUpcaseAnsi(
+    IN  PCHAR       Buffer
+    );
+
+static FORCEINLINE VOID
+__FdoFreeAnsi(
+    IN  PANSI_STRING    Ansi
+    );
+
 struct _XENBUS_FDO {
     PXENBUS_DX                      Dx;
     PDEVICE_OBJECT                  LowerDeviceObject;
@@ -105,7 +115,18 @@ struct _XENBUS_FDO {
 
     PXENBUS_EVTCHN_DESCRIPTOR       Evtchn;
     PXENBUS_SUSPEND_CALLBACK        SuspendCallbackLate;
+
+    LIST_ENTRY                      VusbInstanceList;
 };
+
+typedef struct
+{
+    LIST_ENTRY      ListEntry;
+    ULONG           InstanceId;
+    PXENBUS_PDO     Pdo;
+    BOOLEAN         Present;
+}
+VUSB_ENTRY, *PVUSB_ENTRY;
 
 static FORCEINLINE PVOID
 __FdoAllocate(
@@ -593,6 +614,145 @@ FdoReleaseMutex(
         FdoDestroy(Fdo);
 }
 
+BOOLEAN
+__FdoEnumerateVusbDevices(
+    IN  PXENBUS_FDO     Fdo
+    )
+{
+    PLIST_ENTRY         Entry;
+    PCHAR               Buffer;
+    PANSI_STRING        XenstoreList;
+    NTSTATUS            status;
+    ULONG               Index;
+    BOOLEAN             NeedInvalidate;
+
+    NeedInvalidate = FALSE;
+    XenstoreList = NULL;
+
+    // Get a snapshot of the device/vusb area in xenstore
+
+    status = STORE(Directory,
+        &Fdo->StoreInterface,
+        NULL,
+        "device",
+        "vusb",
+        &Buffer);
+
+    if (NT_SUCCESS(status))
+    {
+        XenstoreList = __FdoMultiSzToUpcaseAnsi(Buffer);
+        STORE(Free,
+            &Fdo->StoreInterface,
+            Buffer);
+    }
+
+    // Take the Xenstore list to find any Pdos to delete
+
+    if (XenstoreList)
+    {
+        // Walk the device list in the Fdo looking for the Vusb instance
+        Entry = Fdo->VusbInstanceList.Flink;
+        while (Entry != &Fdo->VusbInstanceList)
+        {
+            PVUSB_ENTRY VusbEntry = CONTAINING_RECORD(Entry, VUSB_ENTRY, ListEntry);
+            PLIST_ENTRY VusbNext = Entry->Flink;
+            PANSI_STRING XsDevice;
+            BOOLEAN Missing;
+            VusbEntry->Present = FALSE; // Reset it to 'missing'
+            Missing = TRUE;
+            for (Index = 0; XenstoreList[Index].Buffer != NULL; Index++)
+            {
+                XsDevice = &XenstoreList[Index];
+                if (VusbEntry->InstanceId == (ULONG)atoi(XsDevice->Buffer))
+                {
+                    VusbEntry->Present = TRUE;
+                    Missing = FALSE;   // Present in Xenstore
+                }
+            }
+
+            if (Missing &&
+                !PdoIsMissing(VusbEntry->Pdo) &&
+                PdoGetDevicePnpState(VusbEntry->Pdo) != Deleted)
+            {
+                Info ("Removing list entry for \"%s\\%d\" (pdo=%p)\n", "VUSB", VusbEntry->InstanceId, VusbEntry->Pdo);
+
+                PdoSetMissing(VusbEntry->Pdo, "device disappeared");
+
+                // If the PDO has not yet been enumerated then we can go ahead
+                // and mark it as deleted, otherwise we need to notify PnP manager and
+                // wait for the REMOVE_DEVICE IRP.
+                if (PdoGetDevicePnpState(VusbEntry->Pdo) == Present)
+                {
+                    PdoSetDevicePnpState(VusbEntry->Pdo, Deleted);
+                    PdoDestroy(VusbEntry->Pdo);
+                }
+                else
+                {
+                    NeedInvalidate = TRUE;
+                }
+
+                RemoveEntryList(Entry);
+                ExFreePool(VusbEntry);
+            }
+
+            Entry = VusbNext;
+        }
+    }
+
+    // Find any new Vusb devices to create new Pdos
+
+    if (XenstoreList)
+    {
+        for (Index = 0; XenstoreList[Index].Buffer != NULL; Index++)
+        {
+            PVUSB_ENTRY VusbEntry;
+            PANSI_STRING VusbDevice = &XenstoreList[Index];
+            BOOLEAN MakePdo = TRUE;
+
+            Entry = Fdo->VusbInstanceList.Flink;
+            while (Entry != &Fdo->VusbInstanceList)
+            {
+                PLIST_ENTRY Next = Entry->Flink;
+                VusbEntry = CONTAINING_RECORD(Entry, VUSB_ENTRY, ListEntry);
+                if ((ULONG)(atoi(VusbDevice->Buffer)) == VusbEntry->InstanceId)
+                {
+                    MakePdo = FALSE;
+                }
+                Entry = Next;
+            }
+            if (MakePdo)
+            {
+                ANSI_STRING Class;
+                RtlInitAnsiString(&Class, "VUSB");
+                Info("Calling CreatePdo for \"%s\\%d\"\n", "VUSB", atoi(VusbDevice->Buffer));
+                VusbEntry = (PVUSB_ENTRY)ExAllocatePoolWithTag(NonPagedPool, (sizeof(VUSB_ENTRY)), 'SUBX');
+                if (VusbEntry)
+                {
+                    status = PdoCreate(Fdo, &Class, (USHORT)(atoi(VusbDevice->Buffer)), TRUE, &VusbEntry->Pdo);
+                    if (NT_SUCCESS(status))
+                    {
+                        NeedInvalidate = TRUE;
+                        VusbEntry->InstanceId = (ULONG)atoi(VusbDevice->Buffer);
+                        InsertTailList(&Fdo->VusbInstanceList, &VusbEntry->ListEntry);
+                    }
+                    else
+                    {
+                        ExFreePool (VusbEntry);
+                    }
+                }
+            }
+        }
+
+        if (XenstoreList != NULL)
+        {
+            __FdoFreeAnsi(XenstoreList);
+        }
+    }
+
+    return NeedInvalidate;
+
+}
+
 static FORCEINLINE BOOLEAN
 __FdoEnumerate(
     IN  PXENBUS_FDO     Fdo,
@@ -677,14 +837,17 @@ __FdoEnumerate(
     for (Index = 0; Classes[Index].Buffer != NULL; Index++) {
         PANSI_STRING Class = &Classes[Index];
 
-        if (Class->Length != 0) {
+        if ((Class->Length != 0) &&
+            (strcmp(Class->Buffer, "VUSB") != 0)) {
             NTSTATUS    status;
 
-            status = PdoCreate(Fdo, Class);
+            status = PdoCreate(Fdo, Class, 0, FALSE, NULL);
             if (NT_SUCCESS(status))
                 NeedInvalidate = TRUE;
         }
     }
+
+    NeedInvalidate |= __FdoEnumerateVusbDevices(Fdo);
 
     __FdoReleaseMutex(Fdo);
 
@@ -3866,6 +4029,7 @@ FdoCreate(
 
     InitializeMutex(&Fdo->Mutex);
     InitializeListHead(&Dx->ListEntry);
+    InitializeListHead(&Fdo->VusbInstanceList);
     Fdo->References = 1;
 
     Info("%p (%s)\n",
