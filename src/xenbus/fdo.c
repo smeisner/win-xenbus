@@ -637,7 +637,7 @@ ULONG InstanceId
 
     status = RtlStringCbPrintfA(FrontendPath,
         sizeof(FrontendPath),
-        "device/vusb/%d",
+        "device/vusb/%u",
         InstanceId);
 
     if (NT_SUCCESS(status))
@@ -712,7 +712,7 @@ __ReadFrontendDeviceState(
 
     status = RtlStringCbPrintfA(FrontendPath,
         sizeof(FrontendPath),
-        "device/vusb/%d",
+        "device/vusb/%u",
         InstanceId);
 
     if (NT_SUCCESS(status))

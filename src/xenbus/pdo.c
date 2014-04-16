@@ -1635,7 +1635,7 @@ PdoQueryId(
         if (Pdo->VusbDevice) {
             status = RtlStringCbPrintfW(Buffer,
                                     MAX_DEVICE_ID_LEN,
-                                    L"%04d",
+                                    L"%04u",
                                     Pdo->DeviceId);
             Buffer += wcslen(Buffer);
         }
