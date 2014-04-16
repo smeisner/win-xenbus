@@ -631,9 +631,7 @@ ULONG InstanceId
     CHAR FrontendPath[32];
     PCHAR BackendPath;
 
-    //    STORE(Acquire, &Fdo->StoreInterface);
-
-    Info("Entering __ReadBackendDeviceState()\n");
+    Verbose("Entering __ReadBackendDeviceState()\n");
 
     status = RtlStringCbPrintfA(FrontendPath,
         sizeof(FrontendPath),
@@ -642,7 +640,7 @@ ULONG InstanceId
 
     if (NT_SUCCESS(status))
     {
-        Info(" FrontendPath = %s\n", FrontendPath);
+        Verbose(" FrontendPath = %s\n", FrontendPath);
 
         status = STORE(Read,
             &Fdo->StoreInterface,
@@ -653,7 +651,7 @@ ULONG InstanceId
 
         if (NT_SUCCESS(status))
         {
-            Info(" BackendPath = %s\n", BackendPath);
+            Verbose(" BackendPath = %s\n", BackendPath);
 
             status = STORE(Read,
                 &Fdo->StoreInterface,
@@ -669,7 +667,7 @@ ULONG InstanceId
             if (NT_SUCCESS(status))
             {
                 State = strtol(Buffer, NULL, 10);
-                Info(" Backend state = \"%s\" (%d)\n", Buffer, State);
+                Verbose(" Backend state = \"%s\" (%d)\n", Buffer, State);
                 STORE(Free,
                     &Fdo->StoreInterface,
                     Buffer);
@@ -689,9 +687,7 @@ ULONG InstanceId
         Error("RtlStringCbPrintf() call failed\n");
     }
 
-    //    STORE(Release, &Fdo->StoreInterface);
-
-    Info("Exiting __ReadBackendDeviceState()\n");
+    Verbose("Exiting __ReadBackendDeviceState()\n");
     return State;
 }
 
@@ -706,9 +702,7 @@ __ReadFrontendDeviceState(
     ULONG State = XENBUS_STATE_INVALID;
     CHAR FrontendPath[32];
 
-//    STORE(Acquire, &Fdo->StoreInterface);
-
-    Info("Entering __ReadFrontendDeviceState()\n");
+    Verbose("Entering __ReadFrontendDeviceState()\n");
 
     status = RtlStringCbPrintfA(FrontendPath,
         sizeof(FrontendPath),
@@ -717,7 +711,7 @@ __ReadFrontendDeviceState(
 
     if (NT_SUCCESS(status))
     {
-        Info(" FrontendPath = %s\n", FrontendPath);
+        Verbose(" FrontendPath = %s\n", FrontendPath);
 
         status = STORE(Read,
             &Fdo->StoreInterface,
@@ -729,7 +723,7 @@ __ReadFrontendDeviceState(
         if (NT_SUCCESS(status))
         {
             State = strtol(Buffer, NULL, 10);
-            Info(" Frontend state = \"%s\" (%d)\n", Buffer, State);
+            Verbose(" Frontend state = \"%s\" (%d)\n", Buffer, State);
             STORE(Free,
                 &Fdo->StoreInterface,
                 Buffer);
@@ -744,9 +738,7 @@ __ReadFrontendDeviceState(
         Error("RtlStringCbPrintf() call failed\n");
     }
 
-//    STORE(Release, &Fdo->StoreInterface);
-
-    Info("Exiting __ReadFrontendDeviceState()\n");
+    Verbose("Exiting __ReadFrontendDeviceState()\n");
     return State;
 }
 
